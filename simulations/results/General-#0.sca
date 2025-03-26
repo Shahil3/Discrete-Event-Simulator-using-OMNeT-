@@ -1,0 +1,53 @@
+version 3
+run General-0-20250325-14:58:12-21657
+attr configname General
+attr datetime 20250325-14:58:12
+attr datetimef 20250325-145812
+attr experiment General
+attr inifile omnetpp.ini
+attr iterationvars ""
+attr iterationvarsd ""
+attr iterationvarsf ""
+attr measurement ""
+attr network assignment2.DistributedNetwork
+attr processid 21657
+attr repetition 0
+attr replication #0
+attr resultdir results
+attr runnumber 0
+attr seedset 0
+config network assignment2.DistributedNetwork
+config sim-time-limit 500s
+config *.numClients 2
+config *.numServers 4
+config *.client[0].clientId "\"C1\""
+config *.client[1].clientId "\"C2\""
+config *.server[0].serverId "\"S1\""
+config *.server[1].serverId "\"S2\""
+config *.server[2].serverId "\"S3\""
+config *.server[3].serverId "\"S4\""
+config *.server[0].isMalicious false
+config *.server[1].isMalicious true
+config *.server[2].isMalicious false
+config *.server[3].isMalicious false
+
+par DistributedNetwork.client[0] typename "\"assignment2.Client\""
+par DistributedNetwork.client[0] clientId "\"C1\""
+par DistributedNetwork.client[1] typename "\"assignment2.Client\""
+par DistributedNetwork.client[1] clientId "\"C2\""
+par DistributedNetwork.server[0] typename "\"assignment2.Server\""
+par DistributedNetwork.server[0] serverId "\"S1\""
+par DistributedNetwork.server[0] isMalicious false
+par DistributedNetwork.server[1] typename "\"assignment2.Server\""
+par DistributedNetwork.server[1] serverId "\"S2\""
+par DistributedNetwork.server[1] isMalicious false
+par DistributedNetwork.server[2] typename "\"assignment2.Server\""
+par DistributedNetwork.server[2] serverId "\"S3\""
+par DistributedNetwork.server[2] isMalicious false
+par DistributedNetwork.server[3] typename "\"assignment2.Server\""
+par DistributedNetwork.server[3] serverId "\"S4\""
+par DistributedNetwork.server[3] isMalicious false
+par DistributedNetwork typename "\"assignment2.DistributedNetwork\""
+par DistributedNetwork numClients 2
+par DistributedNetwork numServers 4
+
