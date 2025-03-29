@@ -3,7 +3,7 @@ simple Server
 {
     parameters:
         string serverId;
-        bool isMalicious = false; // default to honest
+        bool isMalicious;
         @display("i=block/server");
     gates:
         inout peer[];

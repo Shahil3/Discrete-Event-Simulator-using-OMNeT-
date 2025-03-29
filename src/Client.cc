@@ -30,23 +30,26 @@ class Client : public cSimpleModule {
     int myConnectedServers = 0;
     int myMajority = 0; // (myConnectedServers / 2) + 1
 
-    // For storing partial results from servers (keyed by server id)
-    map<int, vector<int>> resultsByServer;
+    // For storing partial results from servers (keyed by custom serverId)
+    map<string, vector<int>> resultsByServer;
     int receivedResults = 0;
 
-    // Local cumulative scores for servers, keyed by server id
-    map<int, int> localServerScores;
+    // Local cumulative scores for servers, keyed by custom serverId
+    map<string, int> localServerScores;
 
-    // Mapping from server id to the client's local output gate index for that connection
-    map<int, int> serverIdToGate;
+    // Mapping from custom serverId to the client's local output gate index for that connection
+    map<string, int> serverIdToGate;
 
-    // Gossip data: other clients' scores (clientId -> (server id -> score))
-    map<string, map<int, int>> allClientScores;
+    // Gossip data: other clients' scores (clientId -> (custom serverId -> score))
+    map<string, map<string, int>> allClientScores;
     unordered_set<string> messageLog; // to avoid duplicate gossip
 
     // For initial (and optional round 2) arrays
     vector<int> arrayToProcess;
     bool isRound2 = false;
+
+    // Mapping from custom serverId to the expected maximum value for the chunk sent.
+    map<string, int> expectedMaxByServer;
 
   protected:
     virtual void initialize() override;
@@ -56,9 +59,9 @@ class Client : public cSimpleModule {
     void readTopology();
     void findServerConnections();
     void sendInitialSubtasks();
-    void sendGossipMessage(const map<int, int>& serverScores);
-    map<int, double> calculateAverageScores();
-    vector<int> pickTopServers(int k);
+    void sendGossipMessage(const map<string, int>& serverScores);
+    map<string, double> calculateAverageScores();
+    vector<string> pickTopServers(int k);
 };
 
 Define_Module(Client);
@@ -88,15 +91,20 @@ void Client::readTopology() {
 
     string line;
     int myIndex = getIndex(); // e.g., client[0] or client[1]
+    EV << "[Client " << clientId << "] Reading topology file...\n";
 
     while (getline(topo, line)) {
         if (line.empty())
             continue;
 
-        if (line.rfind("clients=", 0) == 0)
+        if (line.rfind("clients=", 0) == 0) {
             numClients = stoi(line.substr(8));
-        else if (line.rfind("servers=", 0) == 0)
+            EV << "[Client " << clientId << "] Total clients: " << numClients << "\n";
+        }
+        else if (line.rfind("servers=", 0) == 0) {
             numServers = stoi(line.substr(8));
+            EV << "[Client " << clientId << "] Total servers: " << numServers << "\n";
+        }
         else if (line.rfind("client", 0) == 0) {
             istringstream ss(line);
             string from, to;
@@ -117,6 +125,9 @@ void Client::readTopology() {
 
             src->gate("peer$o", gateIdx)->connectTo(dest->gate("peer$i", gateIdx));
             dest->gate("peer$o", gateIdx)->connectTo(src->gate("peer$i", gateIdx));
+
+            EV << "[Client " << clientId << "] Created connection from client[" << fromIdx << "] to " 
+               << ((to.rfind("client", 0) == 0) ? "client" : "server") << "[" << to.substr(6) << "] at gate index " << gateIdx << "\n";
         }
     }
     topo.close();
@@ -132,23 +143,32 @@ void Client::findServerConnections() {
 
         cModule *otherMod = g->getPathEndGate()->getOwnerModule();
         if (otherMod->getComponentType()->getName() == string("Server")) {
-            int serverId = otherMod->getId();
-            serverIdToGate[serverId] = i; // map server id to our local gate index
-            localServerScores[serverId] = 0; // initialize score
+            // Use the custom serverId defined as a string parameter
+            string serverIdParam = otherMod->par("serverId").stringValue();
+            serverIdToGate[serverIdParam] = i; // map custom serverId to our local gate index
+            localServerScores[serverIdParam] = 0; // initialize score
             countServers++;
+            EV << "[Client " << clientId << "] Found connection to Server (serverId=" 
+               << serverIdParam << ") at local gate index " << i << "\n";
         }
     }
 
     myConnectedServers = countServers;
     myMajority = (countServers / 2) + 1;
     EV << "[Client " << clientId << "] Connected to " << myConnectedServers 
-       << " servers. Majority: " << myMajority << "\n";
+       << " servers. Majority threshold: " << myMajority << "\n";
 }
 
 void Client::sendInitialSubtasks() {
     arrayToProcess.clear();
-    for (int i = 0; i < 12; ++i)
-        arrayToProcess.push_back(intuniform(1, 100));
+    for (int i = 0; i < 12; ++i) {
+        int randomVal = intuniform(1, 100);
+        arrayToProcess.push_back(randomVal);
+    }
+    EV << "[Client " << clientId << "] Generated array to process: ";
+    for (int val : arrayToProcess)
+        EV << val << " ";
+    EV << "\n";
 
     int toSend = min(myMajority, myConnectedServers);
 
@@ -161,8 +181,16 @@ void Client::sendInitialSubtasks() {
         chunks.push_back(vector<int>(arrayToProcess.begin() + start, arrayToProcess.begin() + end));
     }
 
+    // Print out the chunks that will be sent to each server.
+    for (size_t i = 0; i < chunks.size(); ++i) {
+        EV << "[Client " << clientId << "] Chunk " << i << ": ";
+        for (int num : chunks[i])
+            EV << num << " ";
+        EV << "\n";
+    }
+
     int sent = 0;
-    // Use the mapping from server id to local gate index.
+    // Use the mapping from custom serverId to local gate index.
     for (auto &entry : serverIdToGate) {
         if (sent >= toSend)
             break;
@@ -171,12 +199,20 @@ void Client::sendInitialSubtasks() {
         if (dest->getComponentType()->getName() != string("Server"))
             continue;
 
+        // Use the custom serverId defined as a string
+        string serverIdParam = dest->par("serverId").stringValue();
+        // Compute expected maximum value for this chunk.
+        int expectedMax = *max_element(chunks[sent].begin(), chunks[sent].end());
+        expectedMaxByServer[serverIdParam] = expectedMax;
+
         SubtaskMessage *msg = new SubtaskMessage("Subtask");
         msg->setClientId(getIndex());
         msg->setDataArraySize(chunks[sent].size());
         for (size_t j = 0; j < chunks[sent].size(); ++j)
             msg->setData(j, chunks[sent][j]);
 
+        EV << "[Client " << clientId << "] Sending Subtask (chunk " << sent << ") to Server (serverId=" 
+           << serverIdParam << ") via gate index " << gateIdx << ". Expected max: " << expectedMax << "\n";
         send(msg, "peer$o", gateIdx);
         sent++;
     }
@@ -186,15 +222,25 @@ void Client::handleMessage(cMessage *msg) {
     if (msg->isSelfMessage()) {
         if (strcmp(msg->getName(), "StartRound2") == 0) {
             EV << "[Client " << clientId << "] Starting Round 2\n";
-            vector<int> topServerIds = pickTopServers(myMajority);
+            vector<string> topServerIds = pickTopServers(myMajority);
             if (topServerIds.empty()) {
                 EV << "[Client " << clientId << "] No top servers selected for Round 2. Aborting round.\n";
                 delete msg;
                 return;
             }
 
+            EV << "[Client " << clientId << "] Top servers for Round 2: ";
+            for (const auto &srv : topServerIds)
+                EV << srv << " ";
+            EV << "\n";
+
             vector<int> newArray(12);
             generate(newArray.begin(), newArray.end(), [&](){ return intuniform(1, 100); });
+
+            EV << "[Client " << clientId << "] Generated new array for Round 2: ";
+            for (int num : newArray)
+                EV << num << " ";
+            EV << "\n";
 
             int chunkSize = newArray.size() / topServerIds.size();
             for (size_t i = 0; i < topServerIds.size(); ++i) {
@@ -207,8 +253,9 @@ void Client::handleMessage(cMessage *msg) {
                 for (size_t j = 0; j < chunk.size(); ++j)
                     subtask->setData(j, chunk[j]);
 
-                // Look up the local gate index for this server id.
                 int localGate = serverIdToGate[topServerIds[i]];
+                EV << "[Client " << clientId << "] Sending Round 2 subtask (chunk " << i 
+                   << ") to Server (serverId=" << topServerIds[i] << ") via gate index " << localGate << "\n";
                 send(subtask, "peer$o", localGate);
             }
             delete msg;
@@ -217,22 +264,37 @@ void Client::handleMessage(cMessage *msg) {
     }
 
     if (auto *resultMsg = dynamic_cast<ResultMessage *>(msg)) {
-        // Extract the server's id from the sender module.
+        // Extract the custom serverId from the sender module's parameter.
         cGate *arrivalGate = msg->getArrivalGate();
         cGate *senderGate = arrivalGate->getPreviousGate();
-        int serverId = senderGate->getOwnerModule()->getId();
-        resultsByServer[serverId].push_back(resultMsg->getResult());
+        string serverIdParam = senderGate->getOwnerModule()->par("serverId").stringValue();
+        resultsByServer[serverIdParam].push_back(resultMsg->getResult());
         receivedResults++;
+        EV << "[Client " << clientId << "] Received result " << resultMsg->getResult() 
+           << " from Server (serverId=" << serverIdParam << "). Total received: " << receivedResults << "\n";
 
         if (receivedResults >= myMajority && !isRound2) {
-            int expectedSum = accumulate(arrayToProcess.begin(), arrayToProcess.end(), 0);
-            for (auto &[srvId, results] : resultsByServer) {
-                for (int res : results) {
-                    localServerScores[srvId] += (res == expectedSum) ? 1 : -1;
+            // For each server, compare the reported result to the expected maximum for its chunk.
+            for (auto &entry : resultsByServer) {
+                const string &srvId = entry.first;
+                int expectedMax = expectedMaxByServer[srvId];
+                EV << "[Client " << clientId << "] Expected max for Server (serverId=" << srvId << "): " << expectedMax << "\n";
+                for (int res : entry.second) {
+                    if (res == expectedMax) {
+                        localServerScores[srvId] += 1;
+                        EV << "[Client " << clientId << "] Server (serverId=" << srvId 
+                           << ") reported correct max result. Increasing score.\n";
+                    }
+                    else {
+                        localServerScores[srvId] -= 1;
+                        EV << "[Client " << clientId << "] Server (serverId=" << srvId 
+                           << ") reported incorrect max result (" << res << "). Decreasing score.\n";
+                    }
                 }
             }
 
             sendGossipMessage(localServerScores);
+            EV << "[Client " << clientId << "] Scheduling Round 2 in 0.1 seconds.\n";
             scheduleAt(simTime() + 0.1, new cMessage("StartRound2"));
             isRound2 = true;
         }
@@ -243,18 +305,20 @@ void Client::handleMessage(cMessage *msg) {
     if (auto *gossip = dynamic_cast<GossipMessage *>(msg)) {
         string content = gossip->getContent();
         string hashValue = to_string(hash<string>{}(content));
+        EV << "[Client " << clientId << "] Received Gossip message: " << content << "\n";
 
         if (messageLog.find(hashValue) == messageLog.end()) {
+            EV << "[Client " << clientId << "] Processing new Gossip message.\n";
             messageLog.insert(hashValue);
 
-            // Parse the gossip message: Format: timestamp:senderId:s<serverId>=<score>#...
+            // Parse the gossip message: Format: timestamp:clientId:s<serverId>=<score>#...
             istringstream ss(content);
             string ts, sender, scores;
             getline(ss, ts, ':');
             getline(ss, sender, ':');
             getline(ss, scores, ':');
 
-            map<int, int> parsedScores;
+            map<string, int> parsedScores;
             stringstream scoreStream(scores);
             string entry;
             while (getline(scoreStream, entry, '#')) {
@@ -262,36 +326,47 @@ void Client::handleMessage(cMessage *msg) {
                     continue;
                 size_t eqPos = entry.find('=');
                 if (eqPos != string::npos) {
-                    int serverId = stoi(entry.substr(1, eqPos - 1));
+                    // Extract the custom serverId as a string.
+                    string serverIdParam = entry.substr(1, eqPos - 1);
                     int score = stoi(entry.substr(eqPos + 1));
-                    parsedScores[serverId] = score;
+                    parsedScores[serverIdParam] = score;
                 }
             }
             allClientScores[sender] = parsedScores;
+            EV << "[Client " << clientId << "] Parsed scores from " << sender << ": ";
+            for (auto &p : parsedScores)
+                EV << "s" << p.first << "=" << p.second << " ";
+            EV << "\n";
 
-            // Forward gossip to all connected output gates except the arrival gate.
             int arrivalGate = gossip->getArrivalGate()->getIndex();
+            // Forward gossip only to connected clients (skip the arrival gate)
             for (int i = 0; i < gateSize("peer$o"); ++i) {
                 cGate *g = gate("peer$o", i);
                 if (g->isConnected() && i != arrivalGate) {
-                    send(gossip->dup(), "peer$o", i);
+                    cModule *dest = g->getPathEndGate()->getOwnerModule();
+                    if (dest->getComponentType()->getName() == string("Client")) {
+                        EV << "[Client " << clientId << "] Forwarding gossip to client via gate index " << i << "\n";
+                        send(gossip->dup(), "peer$o", i);
+                    }
                 }
             }
+        }
+        else {
+            EV << "[Client " << clientId << "] Duplicate gossip received. Ignoring.\n";
         }
         delete msg;
     }
 }
 
 /*
-   sendGossipMessage() creates a gossip message (using server ids, not local gate indices)
-   and sends it to all connected server gates. Also, we store our own scores into allClientScores,
-   so that our averages only include servers we are connected to.
+   sendGossipMessage() creates a gossip message (using custom serverIds)
+   and sends it to all connected client gates. Also, we store our own scores into allClientScores.
 */
-void Client::sendGossipMessage(const map<int, int>& serverScores) {
+void Client::sendGossipMessage(const map<string, int>& serverScores) {
     stringstream content;
     content << time(nullptr) << ":" << clientId << ":";
-    for (auto &[serverId, score] : serverScores)
-        content << "s" << serverId << "=" << score << "#";
+    for (auto &entry : serverScores)
+        content << "s" << entry.first << "=" << entry.second << "#";
 
     GossipMessage *gm = new GossipMessage("Gossip");
     gm->setContent(content.str().c_str());
@@ -301,6 +376,7 @@ void Client::sendGossipMessage(const map<int, int>& serverScores) {
     // Include our own scores in gossip.
     allClientScores[clientId] = serverScores;
 
+    EV << "[Client " << clientId << "] Sending Gossip message: " << content.str() << "\n";
     // Send gossip only on gates connected to clients.
     for (int i = 0; i < gateSize("peer$o"); ++i) {
         cGate *g = gate("peer$o", i);
@@ -308,47 +384,42 @@ void Client::sendGossipMessage(const map<int, int>& serverScores) {
             cModule *dest = g->getPathEndGate()->getOwnerModule();
             if (dest->getComponentType()->getName() == string("Client")) {
                 send(gm->dup(), "peer$o", i);
+                // Note: For clients, you might not have a "serverId" parameter.
+                EV << "[Client " << clientId << "] Gossip forwarded to Client (id=" 
+                   << dest->getId() << ") via gate index " << i << "\n";
             }
         }
     }
     delete gm;
 }
 
-/*
-   calculateAverageScores() computes the average score per server (keyed by server id)
-   using gossip messages received from other clients.
-   --- FIX: Only include server ids that are in our local mapping.
-*/
-map<int, double> Client::calculateAverageScores() {
-    map<int, double> avg;
-    map<int, pair<int, int>> totals; // pair: (sum, count)
+map<string, double> Client::calculateAverageScores() {
+    map<string, double> avg;
+    map<string, pair<int, int>> totals; // pair: (sum, count)
 
-    for (auto &[client, scores] : allClientScores) {
-        for (auto &[serverId, score] : scores) {
-            // Only consider server ids that we are connected to.
+    for (auto &clientScores : allClientScores) {
+        for (auto &entry : clientScores.second) {
+            const string &serverId = entry.first;
+            // Only consider custom serverIds that we are connected to.
             if (serverIdToGate.find(serverId) != serverIdToGate.end()) {
-                totals[serverId].first += score;
+                totals[serverId].first += entry.second;
                 totals[serverId].second++;
             }
         }
     }
 
-    for (auto &[serverId, data] : totals)
-        avg[serverId] = static_cast<double>(data.first) / data.second;
+    for (auto &entry : totals)
+        avg[entry.first] = static_cast<double>(entry.second.first) / entry.second.second;
 
     return avg;
 }
 
-/*
-   pickTopServers() returns the top k server ids (by average score)
-   from the computed average scores.
-*/
-vector<int> Client::pickTopServers(int k) {
+vector<string> Client::pickTopServers(int k) {
     auto avgScores = calculateAverageScores();
-    vector<pair<int, double>> sorted(avgScores.begin(), avgScores.end());
+    vector<pair<string, double>> sorted(avgScores.begin(), avgScores.end());
     sort(sorted.begin(), sorted.end(), [](auto &a, auto &b) { return a.second > b.second; });
 
-    vector<int> top;
+    vector<string> top;
     for (int i = 0; i < min(k, static_cast<int>(sorted.size())); ++i)
         top.push_back(sorted[i].first);
 
