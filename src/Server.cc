@@ -3,7 +3,7 @@
 #include <vector>
 #include <algorithm>
 #include <string>
-#include "messages_m.h"  // Import all 3 auto-generated messages
+#include "messages_m.h"  // Import all auto-generated messages
 
 using namespace omnetpp;
 using namespace std;
@@ -27,6 +27,7 @@ void Server::initialize() {
 }
 
 void Server::handleMessage(cMessage *msg) {
+    // Process only SubtaskMessage messages.
     auto *task = dynamic_cast<SubtaskMessage *>(msg);
     if (!task) {
         EV << "Received unknown message type\n";
@@ -37,25 +38,47 @@ void Server::handleMessage(cMessage *msg) {
     EV << "Server " << serverId << " received subtask (ID: " << task->getSubtaskId() 
        << ") from Client " << task->getClientId() << endl;
 
+    // Process the subtask data.
     vector<int> dataVec;
     int len = task->getDataArraySize();
     for (int i = 0; i < len; ++i) {
         dataVec.push_back(task->getData(i));
     }
-
-    int maxVal = *std::max_element(dataVec.begin(), dataVec.end());
-
+    int maxVal = *max_element(dataVec.begin(), dataVec.end());
     if (isMalicious) {
         maxVal -= 10;  // Return incorrect result intentionally
     }
 
+    // Create the result message.
     ResultMessage *res = new ResultMessage("ResultMessage");
     res->setClientId(task->getClientId());
     res->setResult(maxVal);
-    res->setSubtaskId(task->getSubtaskId());  // Copy the subtask ID from the received message
+    res->setSubtaskId(task->getSubtaskId());
+
+    // Find the correct reverse connection gate:
+    // (We want the gate on our "peer$o" array that connects to the client that sent the subtask.)
+    cGate *arrivalGate = msg->getArrivalGate();      // This is our peer$i gate where the subtask arrived.
+    cGate *senderGate  = arrivalGate->getPreviousGate();  // This is the client's peer$o gate.
+    cModule *clientModule = senderGate->getOwnerModule();
+
+    int reverseGateIndex = -1;
+    int n = gateSize("peer$o");
+    for (int i = 0; i < n; ++i) {
+        cGate *outGate = gate("peer$o", i);
+        if (outGate->isConnected() && outGate->getPathEndGate()->getOwnerModule() == clientModule) {
+            reverseGateIndex = i;
+            break;
+        }
+    }
+    if (reverseGateIndex == -1) {
+        EV << "Error: No reverse connection found to client " << clientModule->getFullPath() << "\n";
+        delete res;
+        delete msg;
+        return;
+    }
 
     EV << "Server " << serverId << " sending result for Subtask " 
-       << task->getSubtaskId() << ": " << maxVal << endl;
-    send(res, "peer$o", msg->getArrivalGate()->getIndex());
+       << task->getSubtaskId() << ": " << maxVal << " via gate peer$o[" << reverseGateIndex << "]" << endl;
+    send(res, "peer$o", reverseGateIndex);
     delete msg;
 }

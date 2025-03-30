@@ -8,7 +8,7 @@
 #include <algorithm>
 #include <ctime>
 #include <numeric>
-#include "messages_m.h"  // Ensure SubtaskMessage and ResultMessage have a subtaskId field
+#include "messages_m.h"  // Ensure SubtaskMessage, ResultMessage, and GossipMessage are defined
 
 using namespace omnetpp;
 using namespace std;
@@ -52,7 +52,7 @@ class Client : public cSimpleModule {
     vector<int> arrayToProcess;
     bool isRound2 = false;
 
-    // Mapping from subtask id to the expected maximum value for that subtask (not used in consensus version)
+    // Mapping from subtask id to the expected maximum value for that subtask (for logging)
     map<int, int> expectedMaxBySubtask;
     // To track which subtasks have been processed already so we don't update scores twice.
     unordered_set<int> processedSubtasks;
@@ -84,7 +84,7 @@ void Client::initialize() {
         endSimulation();
         return;
     }
-    sendInitialSubtasks();   // Send initial subtasks (each subtask is sent to all servers)
+    sendInitialSubtasks();   // Send initial subtasks to connected servers
 }
 
 void Client::readTopology() {
@@ -122,19 +122,29 @@ void Client::readTopology() {
 
             cModule *net = getParentModule();
             cModule *src = net->getSubmodule("client", fromIdx);
-            cModule *dest = net->getSubmodule((to.rfind("client", 0) == 0) ? "client" : "server", stoi(to.substr(6)));
+            // Determine destination module type based on prefix in "to"
+            string destModuleName = (to.rfind("client", 0) == 0) ? "client" : "server";
+            cModule *dest = net->getSubmodule(destModuleName.c_str(), stoi(to.substr(6)));
 
-            // Create bidirectional connection
-            int gateIdx = src->gateSize("peer");
-            ensureGateSize(src, "peer", gateIdx + 1);
-            ensureGateSize(dest, "peer", gateIdx + 1);
-
-            src->gate("peer$o", gateIdx)->connectTo(dest->gate("peer$i", gateIdx));
-            dest->gate("peer$o", gateIdx)->connectTo(src->gate("peer$i", gateIdx));
-
+            // --- Forward connection: from src to dest ---
+            int srcOutIdx = src->gateSize("peer");
+            int destInIdx = dest->gateSize("peer");
+            ensureGateSize(src, "peer", srcOutIdx + 1);
+            ensureGateSize(dest, "peer", destInIdx + 1);
+            src->gate("peer$o", srcOutIdx)->connectTo(dest->gate("peer$i", destInIdx));
             EV << "[Client " << clientId << "] Created connection from client[" << fromIdx << "] to " 
-               << ((to.rfind("client", 0) == 0) ? "client" : "server") << "[" << to.substr(6) 
-               << "] at gate index " << gateIdx << "\n";
+               << destModuleName << "[" << to.substr(6) 
+               << "] at src gate index " << srcOutIdx << " and dest gate index " << destInIdx << "\n";
+
+            // --- Reverse connection: from dest to src ---
+            int destOutIdx = dest->gateSize("peer");
+            int srcInIdx = src->gateSize("peer");
+            ensureGateSize(dest, "peer", destOutIdx + 1);
+            ensureGateSize(src, "peer", srcInIdx + 1);
+            dest->gate("peer$o", destOutIdx)->connectTo(src->gate("peer$i", srcInIdx));
+            EV << "[Client " << clientId << "] Created reverse connection from " 
+               << destModuleName << "[" << to.substr(6) << "] to client[" << fromIdx 
+               << "] at dest gate index " << destOutIdx << " and src gate index " << srcInIdx << "\n";
         }
     }
     topo.close();
@@ -166,11 +176,6 @@ void Client::findServerConnections() {
        << " servers. Majority threshold: " << myMajority << "\n";
 }
 
-//
-// Revised sendInitialSubtasks():
-//  - Divide the array into numSubtasks chunks.
-//  - For each subtask, compute the expected maximum (for logging) and broadcast the subtask message to all servers.
-//
 void Client::sendInitialSubtasks() {
     arrayToProcess.clear();
     for (int i = 0; i < 10; ++i) {
@@ -190,7 +195,7 @@ void Client::sendInitialSubtasks() {
         int end = (i == numSubtasks - 1) ? arrayToProcess.size() : start + chunkSize;
         chunks.push_back(vector<int>(arrayToProcess.begin() + start, arrayToProcess.begin() + end));
 
-        // For logging: compute and record the expected maximum for this subtask (if needed)
+        // For logging: compute and record the expected maximum for this subtask
         int expectedMax = *max_element(chunks[i].begin(), chunks[i].end());
         expectedMaxBySubtask[i] = expectedMax;
         EV << "[Client " << clientId << "] Subtask " << i << " data: ";
@@ -207,11 +212,10 @@ void Client::sendInitialSubtasks() {
             if (dest->getComponentType()->getName() != string("Server"))
                 continue;
 
-            // Use the custom serverId defined as a string parameter
             string serverIdParam = dest->par("serverId").stringValue();
             SubtaskMessage *msg = new SubtaskMessage("Subtask");
             msg->setClientId(getIndex());
-            msg->setSubtaskId(subtaskId);  // subtask identifier field
+            msg->setSubtaskId(subtaskId);
             msg->setDataArraySize(chunks[subtaskId].size());
             for (size_t j = 0; j < chunks[subtaskId].size(); ++j)
                 msg->setData(j, chunks[subtaskId][j]);
@@ -224,12 +228,6 @@ void Client::sendInitialSubtasks() {
     }
 }
 
-//
-// Revised handleMessage():
-// Processes incoming messages. In particular, when a ResultMessage arrives, the result is
-// stored by subtask. Once results from all connected servers for that subtask have been collected,
-// the consensus is computed and printed, and then server scores are updated accordingly.
-//
 void Client::handleMessage(cMessage *msg) {
     if (msg->isSelfMessage()) {
         if (strcmp(msg->getName(), "StartRound2") == 0) {
@@ -259,7 +257,7 @@ void Client::handleMessage(cMessage *msg) {
             for (size_t i = 0; i < topServerIds.size(); ++i) {
                 SubtaskMessage *subtask = new SubtaskMessage("Subtask");
                 subtask->setClientId(getIndex());
-                subtask->setSubtaskId(i + myConnectedServers + 100); // subtask id for round 2 (optional)
+                subtask->setSubtaskId(i + myConnectedServers + 100);
                 subtask->setDataArraySize(newArray.size());
                 for (size_t j = 0; j < newArray.size(); ++j)
                     subtask->setData(j, newArray[j]);
@@ -274,39 +272,30 @@ void Client::handleMessage(cMessage *msg) {
         }
     }
 
-    // Process result messages.
     if (auto *resultMsg = dynamic_cast<ResultMessage *>(msg)) {
-        // Retrieve subtask id from the result.
         int subtaskId = resultMsg->getSubtaskId();
-
-        // If we've already processed this subtask, ignore additional results.
         if (processedSubtasks.find(subtaskId) != processedSubtasks.end()) {
             EV << "[Client " << clientId << "] Subtask " << subtaskId << " already processed. Ignoring duplicate result.\n";
             delete msg;
             return;
         }
 
-        // Determine the server id from the sender module.
         cGate *arrivalGate = msg->getArrivalGate();
         cGate *senderGate = arrivalGate->getPreviousGate();
         string serverIdParam = senderGate->getOwnerModule()->par("serverId").stringValue();
 
-        // Store the result in the map for the appropriate subtask.
         resultsBySubtask[subtaskId][serverIdParam] = resultMsg->getResult();
         EV << "[Client " << clientId << "] Received result for Subtask " << subtaskId
            << " from Server (serverId=" << serverIdParam << "): " << resultMsg->getResult() << "\n";
 
-        // Print current collected results for this subtask.
         EV << "[Client " << clientId << "] Current results for Subtask " << subtaskId << ": ";
         for (auto &entry : resultsBySubtask[subtaskId]) {
             EV << "[server " << entry.first << " -> " << entry.second << "] ";
         }
         EV << "\n";
 
-        // Only process this subtask when results from all connected servers have been received.
         if (resultsBySubtask[subtaskId].size() == (size_t)myConnectedServers) {
             EV << "[Client " << clientId << "] All results received for Subtask " << subtaskId << ". Processing consensus...\n";
-            // Compute consensus result using majority vote.
             map<int, int> frequency;
             for (auto &p : resultsBySubtask[subtaskId])
                 frequency[p.second]++;
@@ -323,7 +312,6 @@ void Client::handleMessage(cMessage *msg) {
                << ", consensus result: " << consensusResult 
                << " (reported by " << maxCount << " servers).\n";
 
-            // Update score for each server based on consensus.
             for (auto &p : resultsBySubtask[subtaskId]) {
                 if (p.second == consensusResult) {
                     localServerScores[p.first] += 1;
@@ -336,12 +324,10 @@ void Client::handleMessage(cMessage *msg) {
                        << "). Decreasing score. New score: " << localServerScores[p.first] << "\n";
                 }
             }
-            // Mark this subtask as processed so that further results are ignored.
             processedSubtasks.insert(subtaskId);
             completedSubtasks++;
             EV << "[Client " << clientId << "] Completed subtasks: " << completedSubtasks << "/" << numSubtasks << "\n";
 
-            // Once all subtasks have been processed, send gossip and schedule Round 2.
             if (completedSubtasks >= numSubtasks && !isRound2) {
                 EV << "[Client " << clientId << "] All subtasks processed. Sending gossip and scheduling Round 2 in 0.1 seconds.\n";
                 sendGossipMessage(localServerScores);
@@ -353,7 +339,6 @@ void Client::handleMessage(cMessage *msg) {
         return;
     }
 
-    // Process Gossip messages.
     if (auto *gossip = dynamic_cast<GossipMessage *>(msg)) {
         string content = gossip->getContent();
         string hashValue = to_string(hash<string>{}(content));
@@ -363,7 +348,6 @@ void Client::handleMessage(cMessage *msg) {
             EV << "[Client " << clientId << "] Processing new Gossip message.\n";
             messageLog.insert(hashValue);
 
-            // Parse the gossip message: Format: timestamp:clientId:s<serverId>=<score>#...
             istringstream ss(content);
             string ts, sender, scores;
             getline(ss, ts, ':');
@@ -378,8 +362,6 @@ void Client::handleMessage(cMessage *msg) {
                     continue;
                 size_t eqPos = entry.find('=');
                 if (eqPos != string::npos) {
-                    // Extract the custom serverId as a string.
-                    // Format: "s<serverId>=<score>"
                     string serverIdParam = entry.substr(1, eqPos - 1);
                     int score = stoi(entry.substr(eqPos + 1));
                     parsedScores[serverIdParam] = score;
@@ -391,14 +373,11 @@ void Client::handleMessage(cMessage *msg) {
                 EV << "s" << p.first << "=" << p.second << " ";
             EV << "\n";
 
-            // Update local scores by averaging with the received gossip scores,
-            // but only for servers you are connected to.
             for (auto &entry : serverIdToGate) {
                 const string &serverId = entry.first;
                 if (parsedScores.find(serverId) != parsedScores.end()) {
                     int receivedScore = parsedScores[serverId];
                     int currentLocal = localServerScores[serverId];
-                    // Calculate average (integer division)
                     int newScore = (currentLocal + receivedScore) / 2;
                     localServerScores[serverId] = newScore;
                     EV << "[Client " << clientId << "] Updated local score for server (serverId=" 
@@ -408,7 +387,6 @@ void Client::handleMessage(cMessage *msg) {
             }
 
             int arrivalGate = gossip->getArrivalGate()->getIndex();
-            // Forward gossip only to connected clients (skip the arrival gate)
             for (int i = 0; i < gateSize("peer$o"); ++i) {
                 cGate *g = gate("peer$o", i);
                 if (g->isConnected() && i != arrivalGate) {
@@ -427,10 +405,6 @@ void Client::handleMessage(cMessage *msg) {
     }
 }
 
-/*
-   sendGossipMessage() creates a gossip message (using custom serverIds)
-   and sends it to all connected client gates. Also, we store our own scores into allClientScores.
-*/
 void Client::sendGossipMessage(const map<string, int>& serverScores) {
     stringstream content;
     content << time(nullptr) << ":" << clientId << ":";
@@ -442,11 +416,9 @@ void Client::sendGossipMessage(const map<string, int>& serverScores) {
     string hashValue = to_string(hash<string>{}(content.str()));
     messageLog.insert(hashValue);
 
-    // Include our own scores in gossip.
     allClientScores[clientId] = serverScores;
 
     EV << "[Client " << clientId << "] Sending Gossip message: " << content.str() << "\n";
-    // Send gossip only on gates connected to clients.
     for (int i = 0; i < gateSize("peer$o"); ++i) {
         cGate *g = gate("peer$o", i);
         if (g->isConnected()) {
@@ -463,12 +435,11 @@ void Client::sendGossipMessage(const map<string, int>& serverScores) {
 
 map<string, double> Client::calculateAverageScores() {
     map<string, double> avg;
-    map<string, pair<int, int>> totals; // pair: (sum, count)
+    map<string, pair<int, int>> totals;
 
     for (auto &clientScores : allClientScores) {
         for (auto &entry : clientScores.second) {
             const string &serverId = entry.first;
-            // Only consider custom serverIds that we are connected to.
             if (serverIdToGate.find(serverId) != serverIdToGate.end()) {
                 totals[serverId].first += entry.second;
                 totals[serverId].second++;

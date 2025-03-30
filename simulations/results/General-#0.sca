@@ -1,8 +1,8 @@
 version 3
-run General-0-20250330-20:05:04-42443
+run General-0-20250330-22:36:03-70753
 attr configname General
-attr datetime 20250330-20:05:04
-attr datetimef 20250330-200504
+attr datetime 20250330-22:36:03
+attr datetimef 20250330-223603
 attr experiment General
 attr inifile omnetpp.ini
 attr iterationvars ""
@@ -10,12 +10,13 @@ attr iterationvarsd ""
 attr iterationvarsf ""
 attr measurement ""
 attr network assignment2.DistributedNetwork
-attr processid 42443
+attr processid 70753
 attr repetition 0
 attr replication #0
 attr resultdir results
 attr runnumber 0
 attr seedset 0
+config image-path ../images
 config network assignment2.DistributedNetwork
 config sim-time-limit 500s
 config *.numClients 2
