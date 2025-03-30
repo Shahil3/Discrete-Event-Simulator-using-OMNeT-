@@ -1,8 +1,8 @@
 version 3
-run General-0-20250329-15:55:03-21242
+run General-0-20250330-20:05:04-42443
 attr configname General
-attr datetime 20250329-15:55:03
-attr datetimef 20250329-155503
+attr datetime 20250330-20:05:04
+attr datetimef 20250330-200504
 attr experiment General
 attr inifile omnetpp.ini
 attr iterationvars ""
@@ -10,7 +10,7 @@ attr iterationvarsd ""
 attr iterationvarsf ""
 attr measurement ""
 attr network assignment2.DistributedNetwork
-attr processid 21242
+attr processid 42443
 attr repetition 0
 attr replication #0
 attr resultdir results
@@ -28,7 +28,7 @@ config *.server[2].serverId "\"S3\""
 config *.server[3].serverId "\"S4\""
 config *.server[4].serverId "\"S5\""
 config *.server[0].isMalicious false
-config *.server[1].isMalicious true
+config *.server[1].isMalicious false
 config *.server[2].isMalicious false
 config *.server[3].isMalicious false
 config *.server[4].isMalicious true
@@ -42,7 +42,7 @@ par DistributedNetwork.server[0] serverId "\"S1\""
 par DistributedNetwork.server[0] isMalicious false
 par DistributedNetwork.server[1] typename "\"assignment2.Server\""
 par DistributedNetwork.server[1] serverId "\"S2\""
-par DistributedNetwork.server[1] isMalicious true
+par DistributedNetwork.server[1] isMalicious false
 par DistributedNetwork.server[2] typename "\"assignment2.Server\""
 par DistributedNetwork.server[2] serverId "\"S3\""
 par DistributedNetwork.server[2] isMalicious false

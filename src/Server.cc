@@ -8,8 +8,7 @@
 using namespace omnetpp;
 using namespace std;
 
-class Server : public cSimpleModule
-{
+class Server : public cSimpleModule {
   private:
     bool isMalicious;
     string serverId;
@@ -21,15 +20,13 @@ class Server : public cSimpleModule
 
 Define_Module(Server);
 
-void Server::initialize()
-{
+void Server::initialize() {
     serverId = par("serverId").stringValue();
     isMalicious = par("isMalicious").boolValue();
     EV << "Server " << serverId << " initialized. Malicious: " << (isMalicious ? "Yes" : "No") << endl;
 }
 
-void Server::handleMessage(cMessage *msg)
-{
+void Server::handleMessage(cMessage *msg) {
     auto *task = dynamic_cast<SubtaskMessage *>(msg);
     if (!task) {
         EV << "Received unknown message type\n";
@@ -37,7 +34,8 @@ void Server::handleMessage(cMessage *msg)
         return;
     }
 
-    EV << "Server " << serverId << " received subtask from Client " << task->getClientId() << endl;
+    EV << "Server " << serverId << " received subtask (ID: " << task->getSubtaskId() 
+       << ") from Client " << task->getClientId() << endl;
 
     vector<int> dataVec;
     int len = task->getDataArraySize();
@@ -54,7 +52,10 @@ void Server::handleMessage(cMessage *msg)
     ResultMessage *res = new ResultMessage("ResultMessage");
     res->setClientId(task->getClientId());
     res->setResult(maxVal);
+    res->setSubtaskId(task->getSubtaskId());  // Copy the subtask ID from the received message
 
+    EV << "Server " << serverId << " sending result for Subtask " 
+       << task->getSubtaskId() << ": " << maxVal << endl;
     send(res, "peer$o", msg->getArrivalGate()->getIndex());
     delete msg;
 }

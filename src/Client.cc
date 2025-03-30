@@ -8,7 +8,7 @@
 #include <algorithm>
 #include <ctime>
 #include <numeric>
-#include "messages_m.h"
+#include "messages_m.h"  // Ensure SubtaskMessage and ResultMessage have a subtaskId field
 
 using namespace omnetpp;
 using namespace std;
@@ -30,9 +30,13 @@ class Client : public cSimpleModule {
     int myConnectedServers = 0;
     int myMajority = 0; // (myConnectedServers / 2) + 1
 
-    // For storing partial results from servers (keyed by custom serverId)
-    map<string, vector<int>> resultsByServer;
-    int receivedResults = 0;
+    // For storing results per subtask:
+    // For each subtask (key: subtask id) we store a mapping (serverId -> reported result)
+    map<int, map<string, int>> resultsBySubtask;
+    // Count how many subtasks have been fully processed (i.e. received results from all servers)
+    int completedSubtasks = 0;
+    // Total number of subtasks for the round.
+    int numSubtasks = 5;
 
     // Local cumulative scores for servers, keyed by custom serverId
     map<string, int> localServerScores;
@@ -48,8 +52,10 @@ class Client : public cSimpleModule {
     vector<int> arrayToProcess;
     bool isRound2 = false;
 
-    // Mapping from custom serverId to the expected maximum value for the chunk sent.
-    map<string, int> expectedMaxByServer;
+    // Mapping from subtask id to the expected maximum value for that subtask (not used in consensus version)
+    map<int, int> expectedMaxBySubtask;
+    // To track which subtasks have been processed already so we don't update scores twice.
+    unordered_set<int> processedSubtasks;
 
   protected:
     virtual void initialize() override;
@@ -78,7 +84,7 @@ void Client::initialize() {
         endSimulation();
         return;
     }
-    sendInitialSubtasks();   // Send initial subtasks to majority servers
+    sendInitialSubtasks();   // Send initial subtasks (each subtask is sent to all servers)
 }
 
 void Client::readTopology() {
@@ -127,7 +133,8 @@ void Client::readTopology() {
             dest->gate("peer$o", gateIdx)->connectTo(src->gate("peer$i", gateIdx));
 
             EV << "[Client " << clientId << "] Created connection from client[" << fromIdx << "] to " 
-               << ((to.rfind("client", 0) == 0) ? "client" : "server") << "[" << to.substr(6) << "] at gate index " << gateIdx << "\n";
+               << ((to.rfind("client", 0) == 0) ? "client" : "server") << "[" << to.substr(6) 
+               << "] at gate index " << gateIdx << "\n";
         }
     }
     topo.close();
@@ -159,9 +166,14 @@ void Client::findServerConnections() {
        << " servers. Majority threshold: " << myMajority << "\n";
 }
 
+//
+// Revised sendInitialSubtasks():
+//  - Divide the array into numSubtasks chunks.
+//  - For each subtask, compute the expected maximum (for logging) and broadcast the subtask message to all servers.
+//
 void Client::sendInitialSubtasks() {
     arrayToProcess.clear();
-    for (int i = 0; i < 12; ++i) {
+    for (int i = 0; i < 10; ++i) {
         int randomVal = intuniform(1, 100);
         arrayToProcess.push_back(randomVal);
     }
@@ -170,54 +182,54 @@ void Client::sendInitialSubtasks() {
         EV << val << " ";
     EV << "\n";
 
-    int toSend = min(myMajority, myConnectedServers);
-
-    // Divide the array evenly among all connected servers.
-    int chunkSize = arrayToProcess.size() / myConnectedServers;
+    // Divide the array into a fixed number of subtasks (numSubtasks = 5)
     vector<vector<int>> chunks;
-    for (int i = 0; i < myConnectedServers; ++i) {
+    int chunkSize = arrayToProcess.size() / numSubtasks;
+    for (int i = 0; i < numSubtasks; ++i) {
         int start = i * chunkSize;
-        int end = (i == myConnectedServers - 1) ? arrayToProcess.size() : start + chunkSize;
+        int end = (i == numSubtasks - 1) ? arrayToProcess.size() : start + chunkSize;
         chunks.push_back(vector<int>(arrayToProcess.begin() + start, arrayToProcess.begin() + end));
-    }
 
-    // Print out the chunks that will be sent to each server.
-    for (size_t i = 0; i < chunks.size(); ++i) {
-        EV << "[Client " << clientId << "] Chunk " << i << ": ";
+        // For logging: compute and record the expected maximum for this subtask (if needed)
+        int expectedMax = *max_element(chunks[i].begin(), chunks[i].end());
+        expectedMaxBySubtask[i] = expectedMax;
+        EV << "[Client " << clientId << "] Subtask " << i << " data: ";
         for (int num : chunks[i])
             EV << num << " ";
-        EV << "\n";
+        EV << " | Expected max (for logging): " << expectedMax << "\n";
     }
 
-    int sent = 0;
-    // Use the mapping from custom serverId to local gate index.
-    for (auto &entry : serverIdToGate) {
-        if (sent >= toSend)
-            break;
-        int gateIdx = entry.second;
-        cModule *dest = gate("peer$o", gateIdx)->getPathEndGate()->getOwnerModule();
-        if (dest->getComponentType()->getName() != string("Server"))
-            continue;
+    // For each subtask, send the same message to every connected server.
+    for (size_t subtaskId = 0; subtaskId < chunks.size(); ++subtaskId) {
+        for (auto &entry : serverIdToGate) {
+            int gateIdx = entry.second;
+            cModule *dest = gate("peer$o", gateIdx)->getPathEndGate()->getOwnerModule();
+            if (dest->getComponentType()->getName() != string("Server"))
+                continue;
 
-        // Use the custom serverId defined as a string
-        string serverIdParam = dest->par("serverId").stringValue();
-        // Compute expected maximum value for this chunk.
-        int expectedMax = *max_element(chunks[sent].begin(), chunks[sent].end());
-        expectedMaxByServer[serverIdParam] = expectedMax;
+            // Use the custom serverId defined as a string parameter
+            string serverIdParam = dest->par("serverId").stringValue();
+            SubtaskMessage *msg = new SubtaskMessage("Subtask");
+            msg->setClientId(getIndex());
+            msg->setSubtaskId(subtaskId);  // subtask identifier field
+            msg->setDataArraySize(chunks[subtaskId].size());
+            for (size_t j = 0; j < chunks[subtaskId].size(); ++j)
+                msg->setData(j, chunks[subtaskId][j]);
 
-        SubtaskMessage *msg = new SubtaskMessage("Subtask");
-        msg->setClientId(getIndex());
-        msg->setDataArraySize(chunks[sent].size());
-        for (size_t j = 0; j < chunks[sent].size(); ++j)
-            msg->setData(j, chunks[sent][j]);
-
-        EV << "[Client " << clientId << "] Sending Subtask (chunk " << sent << ") to Server (serverId=" 
-           << serverIdParam << ") via gate index " << gateIdx << ". Expected max: " << expectedMax << "\n";
-        send(msg, "peer$o", gateIdx);
-        sent++;
+            EV << "[Client " << clientId << "] Sending Subtask " << subtaskId 
+               << " to Server (serverId=" << serverIdParam << ") via gate index " << gateIdx 
+               << ". Expected max (for logging): " << expectedMaxBySubtask[subtaskId] << "\n";
+            send(msg, "peer$o", gateIdx);
+        }
     }
 }
 
+//
+// Revised handleMessage():
+// Processes incoming messages. In particular, when a ResultMessage arrives, the result is
+// stored by subtask. Once results from all connected servers for that subtask have been collected,
+// the consensus is computed and printed, and then server scores are updated accordingly.
+//
 void Client::handleMessage(cMessage *msg) {
     if (msg->isSelfMessage()) {
         if (strcmp(msg->getName(), "StartRound2") == 0) {
@@ -234,6 +246,7 @@ void Client::handleMessage(cMessage *msg) {
                 EV << srv << " ";
             EV << "\n";
 
+            // Generate a new array for Round 2.
             vector<int> newArray(12);
             generate(newArray.begin(), newArray.end(), [&](){ return intuniform(1, 100); });
 
@@ -242,66 +255,105 @@ void Client::handleMessage(cMessage *msg) {
                 EV << num << " ";
             EV << "\n";
 
-            int chunkSize = newArray.size() / topServerIds.size();
+            // For Round 2, send the entire array to each top server (no chunking).
             for (size_t i = 0; i < topServerIds.size(); ++i) {
-                int start = i * chunkSize;
-                int end = (i == topServerIds.size() - 1) ? newArray.size() : start + chunkSize;
-                vector<int> chunk(newArray.begin() + start, newArray.begin() + end);
-
                 SubtaskMessage *subtask = new SubtaskMessage("Subtask");
-                subtask->setDataArraySize(chunk.size());
-                for (size_t j = 0; j < chunk.size(); ++j)
-                    subtask->setData(j, chunk[j]);
+                subtask->setClientId(getIndex());
+                subtask->setSubtaskId(i + myConnectedServers + 100); // subtask id for round 2 (optional)
+                subtask->setDataArraySize(newArray.size());
+                for (size_t j = 0; j < newArray.size(); ++j)
+                    subtask->setData(j, newArray[j]);
 
                 int localGate = serverIdToGate[topServerIds[i]];
-                EV << "[Client " << clientId << "] Sending Round 2 subtask (chunk " << i 
-                   << ") to Server (serverId=" << topServerIds[i] << ") via gate index " << localGate << "\n";
+                EV << "[Client " << clientId << "] Sending Round 2 subtask (full array) to Server (serverId="
+                   << topServerIds[i] << ") via gate index " << localGate << "\n";
                 send(subtask, "peer$o", localGate);
             }
             delete msg;
+            return;
         }
-        return;
     }
 
+    // Process result messages.
     if (auto *resultMsg = dynamic_cast<ResultMessage *>(msg)) {
-        // Extract the custom serverId from the sender module's parameter.
+        // Retrieve subtask id from the result.
+        int subtaskId = resultMsg->getSubtaskId();
+
+        // If we've already processed this subtask, ignore additional results.
+        if (processedSubtasks.find(subtaskId) != processedSubtasks.end()) {
+            EV << "[Client " << clientId << "] Subtask " << subtaskId << " already processed. Ignoring duplicate result.\n";
+            delete msg;
+            return;
+        }
+
+        // Determine the server id from the sender module.
         cGate *arrivalGate = msg->getArrivalGate();
         cGate *senderGate = arrivalGate->getPreviousGate();
         string serverIdParam = senderGate->getOwnerModule()->par("serverId").stringValue();
-        resultsByServer[serverIdParam].push_back(resultMsg->getResult());
-        receivedResults++;
-        EV << "[Client " << clientId << "] Received result " << resultMsg->getResult() 
-           << " from Server (serverId=" << serverIdParam << "). Total received: " << receivedResults << "\n";
 
-        if (receivedResults >= myMajority && !isRound2) {
-            // For each server, compare the reported result to the expected maximum for its chunk.
-            for (auto &entry : resultsByServer) {
-                const string &srvId = entry.first;
-                int expectedMax = expectedMaxByServer[srvId];
-                EV << "[Client " << clientId << "] Expected max for Server (serverId=" << srvId << "): " << expectedMax << "\n";
-                for (int res : entry.second) {
-                    if (res == expectedMax) {
-                        localServerScores[srvId] += 1;
-                        EV << "[Client " << clientId << "] Server (serverId=" << srvId 
-                           << ") reported correct max result. Increasing score.\n";
-                    }
-                    else {
-                        localServerScores[srvId] -= 1;
-                        EV << "[Client " << clientId << "] Server (serverId=" << srvId 
-                           << ") reported incorrect max result (" << res << "). Decreasing score.\n";
-                    }
+        // Store the result in the map for the appropriate subtask.
+        resultsBySubtask[subtaskId][serverIdParam] = resultMsg->getResult();
+        EV << "[Client " << clientId << "] Received result for Subtask " << subtaskId
+           << " from Server (serverId=" << serverIdParam << "): " << resultMsg->getResult() << "\n";
+
+        // Print current collected results for this subtask.
+        EV << "[Client " << clientId << "] Current results for Subtask " << subtaskId << ": ";
+        for (auto &entry : resultsBySubtask[subtaskId]) {
+            EV << "[server " << entry.first << " -> " << entry.second << "] ";
+        }
+        EV << "\n";
+
+        // Only process this subtask when results from all connected servers have been received.
+        if (resultsBySubtask[subtaskId].size() == (size_t)myConnectedServers) {
+            EV << "[Client " << clientId << "] All results received for Subtask " << subtaskId << ". Processing consensus...\n";
+            // Compute consensus result using majority vote.
+            map<int, int> frequency;
+            for (auto &p : resultsBySubtask[subtaskId])
+                frequency[p.second]++;
+
+            int consensusResult = -1;
+            int maxCount = 0;
+            for (auto &entry : frequency) {
+                if (entry.second > maxCount) {
+                    maxCount = entry.second;
+                    consensusResult = entry.first;
                 }
             }
+            EV << "[Client " << clientId << "] For Subtask " << subtaskId 
+               << ", consensus result: " << consensusResult 
+               << " (reported by " << maxCount << " servers).\n";
 
-            sendGossipMessage(localServerScores);
-            EV << "[Client " << clientId << "] Scheduling Round 2 in 0.1 seconds.\n";
-            scheduleAt(simTime() + 0.1, new cMessage("StartRound2"));
-            isRound2 = true;
+            // Update score for each server based on consensus.
+            for (auto &p : resultsBySubtask[subtaskId]) {
+                if (p.second == consensusResult) {
+                    localServerScores[p.first] += 1;
+                    EV << "[Client " << clientId << "] Server (serverId=" << p.first 
+                       << ") reported the consensus result. Increasing score. New score: " << localServerScores[p.first] << "\n";
+                } else {
+                    localServerScores[p.first] -= 1;
+                    EV << "[Client " << clientId << "] Server (serverId=" << p.first 
+                       << ") did not report the consensus result (" << p.second 
+                       << "). Decreasing score. New score: " << localServerScores[p.first] << "\n";
+                }
+            }
+            // Mark this subtask as processed so that further results are ignored.
+            processedSubtasks.insert(subtaskId);
+            completedSubtasks++;
+            EV << "[Client " << clientId << "] Completed subtasks: " << completedSubtasks << "/" << numSubtasks << "\n";
+
+            // Once all subtasks have been processed, send gossip and schedule Round 2.
+            if (completedSubtasks >= numSubtasks && !isRound2) {
+                EV << "[Client " << clientId << "] All subtasks processed. Sending gossip and scheduling Round 2 in 0.1 seconds.\n";
+                sendGossipMessage(localServerScores);
+                scheduleAt(simTime() + 0.1, new cMessage("StartRound2"));
+                isRound2 = true;
+            }
         }
         delete msg;
         return;
     }
 
+    // Process Gossip messages.
     if (auto *gossip = dynamic_cast<GossipMessage *>(msg)) {
         string content = gossip->getContent();
         string hashValue = to_string(hash<string>{}(content));
@@ -327,6 +379,7 @@ void Client::handleMessage(cMessage *msg) {
                 size_t eqPos = entry.find('=');
                 if (eqPos != string::npos) {
                     // Extract the custom serverId as a string.
+                    // Format: "s<serverId>=<score>"
                     string serverIdParam = entry.substr(1, eqPos - 1);
                     int score = stoi(entry.substr(eqPos + 1));
                     parsedScores[serverIdParam] = score;
@@ -337,6 +390,22 @@ void Client::handleMessage(cMessage *msg) {
             for (auto &p : parsedScores)
                 EV << "s" << p.first << "=" << p.second << " ";
             EV << "\n";
+
+            // Update local scores by averaging with the received gossip scores,
+            // but only for servers you are connected to.
+            for (auto &entry : serverIdToGate) {
+                const string &serverId = entry.first;
+                if (parsedScores.find(serverId) != parsedScores.end()) {
+                    int receivedScore = parsedScores[serverId];
+                    int currentLocal = localServerScores[serverId];
+                    // Calculate average (integer division)
+                    int newScore = (currentLocal + receivedScore) / 2;
+                    localServerScores[serverId] = newScore;
+                    EV << "[Client " << clientId << "] Updated local score for server (serverId=" 
+                       << serverId << ") to " << newScore << " (average of " << currentLocal 
+                       << " and " << receivedScore << ")\n";
+                }
+            }
 
             int arrivalGate = gossip->getArrivalGate()->getIndex();
             // Forward gossip only to connected clients (skip the arrival gate)
@@ -384,7 +453,6 @@ void Client::sendGossipMessage(const map<string, int>& serverScores) {
             cModule *dest = g->getPathEndGate()->getOwnerModule();
             if (dest->getComponentType()->getName() == string("Client")) {
                 send(gm->dup(), "peer$o", i);
-                // Note: For clients, you might not have a "serverId" parameter.
                 EV << "[Client " << clientId << "] Gossip forwarded to Client (id=" 
                    << dest->getId() << ") via gate index " << i << "\n";
             }
@@ -423,5 +491,9 @@ vector<string> Client::pickTopServers(int k) {
     for (int i = 0; i < min(k, static_cast<int>(sorted.size())); ++i)
         top.push_back(sorted[i].first);
 
+    EV << "[Client " << clientId << "] Average scores: ";
+    for (auto &p : sorted)
+        EV << "s" << p.first << "=" << p.second << " ";
+    EV << "\n";
     return top;
 }

@@ -177,6 +177,7 @@ SubtaskMessage& SubtaskMessage::operator=(const SubtaskMessage& other)
 void SubtaskMessage::copy(const SubtaskMessage& other)
 {
     this->clientId = other.clientId;
+    this->subtaskId = other.subtaskId;
     delete [] this->data;
     this->data = (other.data_arraysize==0) ? nullptr : new int[other.data_arraysize];
     data_arraysize = other.data_arraysize;
@@ -189,6 +190,7 @@ void SubtaskMessage::parsimPack(omnetpp::cCommBuffer *b) const
 {
     ::omnetpp::cMessage::parsimPack(b);
     doParsimPacking(b,this->clientId);
+    doParsimPacking(b,this->subtaskId);
     b->pack(data_arraysize);
     doParsimArrayPacking(b,this->data,data_arraysize);
 }
@@ -197,6 +199,7 @@ void SubtaskMessage::parsimUnpack(omnetpp::cCommBuffer *b)
 {
     ::omnetpp::cMessage::parsimUnpack(b);
     doParsimUnpacking(b,this->clientId);
+    doParsimUnpacking(b,this->subtaskId);
     delete [] this->data;
     b->unpack(data_arraysize);
     if (data_arraysize == 0) {
@@ -215,6 +218,16 @@ int SubtaskMessage::getClientId() const
 void SubtaskMessage::setClientId(int clientId)
 {
     this->clientId = clientId;
+}
+
+int SubtaskMessage::getSubtaskId() const
+{
+    return this->subtaskId;
+}
+
+void SubtaskMessage::setSubtaskId(int subtaskId)
+{
+    this->subtaskId = subtaskId;
 }
 
 size_t SubtaskMessage::getDataArraySize() const
@@ -289,6 +302,7 @@ class SubtaskMessageDescriptor : public omnetpp::cClassDescriptor
     mutable const char **propertyNames;
     enum FieldConstants {
         FIELD_clientId,
+        FIELD_subtaskId,
         FIELD_data,
     };
   public:
@@ -356,7 +370,7 @@ const char *SubtaskMessageDescriptor::getProperty(const char *propertyName) cons
 int SubtaskMessageDescriptor::getFieldCount() const
 {
     omnetpp::cClassDescriptor *base = getBaseClassDescriptor();
-    return base ? 2+base->getFieldCount() : 2;
+    return base ? 3+base->getFieldCount() : 3;
 }
 
 unsigned int SubtaskMessageDescriptor::getFieldTypeFlags(int field) const
@@ -369,9 +383,10 @@ unsigned int SubtaskMessageDescriptor::getFieldTypeFlags(int field) const
     }
     static unsigned int fieldTypeFlags[] = {
         FD_ISEDITABLE,    // FIELD_clientId
+        FD_ISEDITABLE,    // FIELD_subtaskId
         FD_ISARRAY | FD_ISEDITABLE | FD_ISRESIZABLE,    // FIELD_data
     };
-    return (field >= 0 && field < 2) ? fieldTypeFlags[field] : 0;
+    return (field >= 0 && field < 3) ? fieldTypeFlags[field] : 0;
 }
 
 const char *SubtaskMessageDescriptor::getFieldName(int field) const
@@ -384,9 +399,10 @@ const char *SubtaskMessageDescriptor::getFieldName(int field) const
     }
     static const char *fieldNames[] = {
         "clientId",
+        "subtaskId",
         "data",
     };
-    return (field >= 0 && field < 2) ? fieldNames[field] : nullptr;
+    return (field >= 0 && field < 3) ? fieldNames[field] : nullptr;
 }
 
 int SubtaskMessageDescriptor::findField(const char *fieldName) const
@@ -394,7 +410,8 @@ int SubtaskMessageDescriptor::findField(const char *fieldName) const
     omnetpp::cClassDescriptor *base = getBaseClassDescriptor();
     int baseIndex = base ? base->getFieldCount() : 0;
     if (strcmp(fieldName, "clientId") == 0) return baseIndex + 0;
-    if (strcmp(fieldName, "data") == 0) return baseIndex + 1;
+    if (strcmp(fieldName, "subtaskId") == 0) return baseIndex + 1;
+    if (strcmp(fieldName, "data") == 0) return baseIndex + 2;
     return base ? base->findField(fieldName) : -1;
 }
 
@@ -408,9 +425,10 @@ const char *SubtaskMessageDescriptor::getFieldTypeString(int field) const
     }
     static const char *fieldTypeStrings[] = {
         "int",    // FIELD_clientId
+        "int",    // FIELD_subtaskId
         "int",    // FIELD_data
     };
-    return (field >= 0 && field < 2) ? fieldTypeStrings[field] : nullptr;
+    return (field >= 0 && field < 3) ? fieldTypeStrings[field] : nullptr;
 }
 
 const char **SubtaskMessageDescriptor::getFieldPropertyNames(int field) const
@@ -422,10 +440,6 @@ const char **SubtaskMessageDescriptor::getFieldPropertyNames(int field) const
         field -= base->getFieldCount();
     }
     switch (field) {
-        case FIELD_data: {
-            static const char *names[] = { "packetData",  nullptr };
-            return names;
-        }
         default: return nullptr;
     }
 }
@@ -439,9 +453,6 @@ const char *SubtaskMessageDescriptor::getFieldProperty(int field, const char *pr
         field -= base->getFieldCount();
     }
     switch (field) {
-        case FIELD_data:
-            if (!strcmp(propertyName, "packetData")) return "";
-            return nullptr;
         default: return nullptr;
     }
 }
@@ -503,6 +514,7 @@ std::string SubtaskMessageDescriptor::getFieldValueAsString(omnetpp::any_ptr obj
     SubtaskMessage *pp = omnetpp::fromAnyPtr<SubtaskMessage>(object); (void)pp;
     switch (field) {
         case FIELD_clientId: return long2string(pp->getClientId());
+        case FIELD_subtaskId: return long2string(pp->getSubtaskId());
         case FIELD_data: return long2string(pp->getData(i));
         default: return "";
     }
@@ -521,6 +533,7 @@ void SubtaskMessageDescriptor::setFieldValueAsString(omnetpp::any_ptr object, in
     SubtaskMessage *pp = omnetpp::fromAnyPtr<SubtaskMessage>(object); (void)pp;
     switch (field) {
         case FIELD_clientId: pp->setClientId(string2long(value)); break;
+        case FIELD_subtaskId: pp->setSubtaskId(string2long(value)); break;
         case FIELD_data: pp->setData(i,string2long(value)); break;
         default: throw omnetpp::cRuntimeError("Cannot set field %d of class 'SubtaskMessage'", field);
     }
@@ -537,6 +550,7 @@ omnetpp::cValue SubtaskMessageDescriptor::getFieldValue(omnetpp::any_ptr object,
     SubtaskMessage *pp = omnetpp::fromAnyPtr<SubtaskMessage>(object); (void)pp;
     switch (field) {
         case FIELD_clientId: return pp->getClientId();
+        case FIELD_subtaskId: return pp->getSubtaskId();
         case FIELD_data: return pp->getData(i);
         default: throw omnetpp::cRuntimeError("Cannot return field %d of class 'SubtaskMessage' as cValue -- field index out of range?", field);
     }
@@ -555,6 +569,7 @@ void SubtaskMessageDescriptor::setFieldValue(omnetpp::any_ptr object, int field,
     SubtaskMessage *pp = omnetpp::fromAnyPtr<SubtaskMessage>(object); (void)pp;
     switch (field) {
         case FIELD_clientId: pp->setClientId(omnetpp::checked_int_cast<int>(value.intValue())); break;
+        case FIELD_subtaskId: pp->setSubtaskId(omnetpp::checked_int_cast<int>(value.intValue())); break;
         case FIELD_data: pp->setData(i,omnetpp::checked_int_cast<int>(value.intValue())); break;
         default: throw omnetpp::cRuntimeError("Cannot set field %d of class 'SubtaskMessage'", field);
     }
@@ -629,6 +644,7 @@ ResultMessage& ResultMessage::operator=(const ResultMessage& other)
 void ResultMessage::copy(const ResultMessage& other)
 {
     this->clientId = other.clientId;
+    this->subtaskId = other.subtaskId;
     this->result = other.result;
 }
 
@@ -636,6 +652,7 @@ void ResultMessage::parsimPack(omnetpp::cCommBuffer *b) const
 {
     ::omnetpp::cMessage::parsimPack(b);
     doParsimPacking(b,this->clientId);
+    doParsimPacking(b,this->subtaskId);
     doParsimPacking(b,this->result);
 }
 
@@ -643,6 +660,7 @@ void ResultMessage::parsimUnpack(omnetpp::cCommBuffer *b)
 {
     ::omnetpp::cMessage::parsimUnpack(b);
     doParsimUnpacking(b,this->clientId);
+    doParsimUnpacking(b,this->subtaskId);
     doParsimUnpacking(b,this->result);
 }
 
@@ -654,6 +672,16 @@ int ResultMessage::getClientId() const
 void ResultMessage::setClientId(int clientId)
 {
     this->clientId = clientId;
+}
+
+int ResultMessage::getSubtaskId() const
+{
+    return this->subtaskId;
+}
+
+void ResultMessage::setSubtaskId(int subtaskId)
+{
+    this->subtaskId = subtaskId;
 }
 
 int ResultMessage::getResult() const
@@ -672,6 +700,7 @@ class ResultMessageDescriptor : public omnetpp::cClassDescriptor
     mutable const char **propertyNames;
     enum FieldConstants {
         FIELD_clientId,
+        FIELD_subtaskId,
         FIELD_result,
     };
   public:
@@ -739,7 +768,7 @@ const char *ResultMessageDescriptor::getProperty(const char *propertyName) const
 int ResultMessageDescriptor::getFieldCount() const
 {
     omnetpp::cClassDescriptor *base = getBaseClassDescriptor();
-    return base ? 2+base->getFieldCount() : 2;
+    return base ? 3+base->getFieldCount() : 3;
 }
 
 unsigned int ResultMessageDescriptor::getFieldTypeFlags(int field) const
@@ -752,9 +781,10 @@ unsigned int ResultMessageDescriptor::getFieldTypeFlags(int field) const
     }
     static unsigned int fieldTypeFlags[] = {
         FD_ISEDITABLE,    // FIELD_clientId
+        FD_ISEDITABLE,    // FIELD_subtaskId
         FD_ISEDITABLE,    // FIELD_result
     };
-    return (field >= 0 && field < 2) ? fieldTypeFlags[field] : 0;
+    return (field >= 0 && field < 3) ? fieldTypeFlags[field] : 0;
 }
 
 const char *ResultMessageDescriptor::getFieldName(int field) const
@@ -767,9 +797,10 @@ const char *ResultMessageDescriptor::getFieldName(int field) const
     }
     static const char *fieldNames[] = {
         "clientId",
+        "subtaskId",
         "result",
     };
-    return (field >= 0 && field < 2) ? fieldNames[field] : nullptr;
+    return (field >= 0 && field < 3) ? fieldNames[field] : nullptr;
 }
 
 int ResultMessageDescriptor::findField(const char *fieldName) const
@@ -777,7 +808,8 @@ int ResultMessageDescriptor::findField(const char *fieldName) const
     omnetpp::cClassDescriptor *base = getBaseClassDescriptor();
     int baseIndex = base ? base->getFieldCount() : 0;
     if (strcmp(fieldName, "clientId") == 0) return baseIndex + 0;
-    if (strcmp(fieldName, "result") == 0) return baseIndex + 1;
+    if (strcmp(fieldName, "subtaskId") == 0) return baseIndex + 1;
+    if (strcmp(fieldName, "result") == 0) return baseIndex + 2;
     return base ? base->findField(fieldName) : -1;
 }
 
@@ -791,9 +823,10 @@ const char *ResultMessageDescriptor::getFieldTypeString(int field) const
     }
     static const char *fieldTypeStrings[] = {
         "int",    // FIELD_clientId
+        "int",    // FIELD_subtaskId
         "int",    // FIELD_result
     };
-    return (field >= 0 && field < 2) ? fieldTypeStrings[field] : nullptr;
+    return (field >= 0 && field < 3) ? fieldTypeStrings[field] : nullptr;
 }
 
 const char **ResultMessageDescriptor::getFieldPropertyNames(int field) const
@@ -877,6 +910,7 @@ std::string ResultMessageDescriptor::getFieldValueAsString(omnetpp::any_ptr obje
     ResultMessage *pp = omnetpp::fromAnyPtr<ResultMessage>(object); (void)pp;
     switch (field) {
         case FIELD_clientId: return long2string(pp->getClientId());
+        case FIELD_subtaskId: return long2string(pp->getSubtaskId());
         case FIELD_result: return long2string(pp->getResult());
         default: return "";
     }
@@ -895,6 +929,7 @@ void ResultMessageDescriptor::setFieldValueAsString(omnetpp::any_ptr object, int
     ResultMessage *pp = omnetpp::fromAnyPtr<ResultMessage>(object); (void)pp;
     switch (field) {
         case FIELD_clientId: pp->setClientId(string2long(value)); break;
+        case FIELD_subtaskId: pp->setSubtaskId(string2long(value)); break;
         case FIELD_result: pp->setResult(string2long(value)); break;
         default: throw omnetpp::cRuntimeError("Cannot set field %d of class 'ResultMessage'", field);
     }
@@ -911,6 +946,7 @@ omnetpp::cValue ResultMessageDescriptor::getFieldValue(omnetpp::any_ptr object, 
     ResultMessage *pp = omnetpp::fromAnyPtr<ResultMessage>(object); (void)pp;
     switch (field) {
         case FIELD_clientId: return pp->getClientId();
+        case FIELD_subtaskId: return pp->getSubtaskId();
         case FIELD_result: return pp->getResult();
         default: throw omnetpp::cRuntimeError("Cannot return field %d of class 'ResultMessage' as cValue -- field index out of range?", field);
     }
@@ -929,6 +965,7 @@ void ResultMessageDescriptor::setFieldValue(omnetpp::any_ptr object, int field, 
     ResultMessage *pp = omnetpp::fromAnyPtr<ResultMessage>(object); (void)pp;
     switch (field) {
         case FIELD_clientId: pp->setClientId(omnetpp::checked_int_cast<int>(value.intValue())); break;
+        case FIELD_subtaskId: pp->setSubtaskId(omnetpp::checked_int_cast<int>(value.intValue())); break;
         case FIELD_result: pp->setResult(omnetpp::checked_int_cast<int>(value.intValue())); break;
         default: throw omnetpp::cRuntimeError("Cannot set field %d of class 'ResultMessage'", field);
     }

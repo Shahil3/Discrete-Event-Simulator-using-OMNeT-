@@ -14,11 +14,13 @@
 //
 message SubtaskMessage {
     int clientId;
-    int data[] @packetData; // This enables dynamic vector support
+    int subtaskId;
+    int data[];
 }
 
 message ResultMessage {
     int clientId;
+    int subtaskId;
     int result;
 }
 

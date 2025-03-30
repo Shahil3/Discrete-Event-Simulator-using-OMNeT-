@@ -39,7 +39,8 @@ class GossipMessage;
  * message SubtaskMessage
  * {
  *     int clientId;
- *     int data[] \@packetData; // This enables dynamic vector support
+ *     int subtaskId;
+ *     int data[];
  * }
  * </pre>
  */
@@ -47,6 +48,7 @@ class SubtaskMessage : public ::omnetpp::cMessage
 {
   protected:
     int clientId = 0;
+    int subtaskId = 0;
     int *data = nullptr;
     size_t data_arraysize = 0;
 
@@ -68,6 +70,9 @@ class SubtaskMessage : public ::omnetpp::cMessage
     virtual int getClientId() const;
     virtual void setClientId(int clientId);
 
+    virtual int getSubtaskId() const;
+    virtual void setSubtaskId(int subtaskId);
+
     virtual void setDataArraySize(size_t size);
     virtual size_t getDataArraySize() const;
     virtual int getData(size_t k) const;
@@ -82,11 +87,12 @@ inline void doParsimPacking(omnetpp::cCommBuffer *b, const SubtaskMessage& obj) 
 inline void doParsimUnpacking(omnetpp::cCommBuffer *b, SubtaskMessage& obj) {obj.parsimUnpack(b);}
 
 /**
- * Class generated from <tt>messages.msg:20</tt> by opp_msgtool.
+ * Class generated from <tt>messages.msg:21</tt> by opp_msgtool.
  * <pre>
  * message ResultMessage
  * {
  *     int clientId;
+ *     int subtaskId;
  *     int result;
  * }
  * </pre>
@@ -95,6 +101,7 @@ class ResultMessage : public ::omnetpp::cMessage
 {
   protected:
     int clientId = 0;
+    int subtaskId = 0;
     int result = 0;
 
   private:
@@ -115,6 +122,9 @@ class ResultMessage : public ::omnetpp::cMessage
     virtual int getClientId() const;
     virtual void setClientId(int clientId);
 
+    virtual int getSubtaskId() const;
+    virtual void setSubtaskId(int subtaskId);
+
     virtual int getResult() const;
     virtual void setResult(int result);
 };
@@ -123,7 +133,7 @@ inline void doParsimPacking(omnetpp::cCommBuffer *b, const ResultMessage& obj) {
 inline void doParsimUnpacking(omnetpp::cCommBuffer *b, ResultMessage& obj) {obj.parsimUnpack(b);}
 
 /**
- * Class generated from <tt>messages.msg:25</tt> by opp_msgtool.
+ * Class generated from <tt>messages.msg:27</tt> by opp_msgtool.
  * <pre>
  * message GossipMessage
  * {
