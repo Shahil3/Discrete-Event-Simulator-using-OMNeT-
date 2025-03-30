@@ -130,6 +130,7 @@ This project is licensed under MIT license.
 
 - OMNeT++ official documentation and community.
 - Awathare Nitin Niranjan(Course Instructor CSL3080)
-- Abhishek Yadav.
+- Shahil Sharma (B22CS048)
+- Abhishek Yadav(B22ES020).
 
 ---
